@@ -4,23 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-`ecgdisp` is a freshly scaffolded `uv` package (`uv init --package`) with no application code yet. The only source is a placeholder `main()` in `src/ecgdisp/__init__.py`. The README is empty. There are no dependencies, tests, linter or type-checker configured yet. Update this file as those are added.
+- The purpose of this program is to display ecg files contained in ~/Prog/ekgdata/data/ptb/physionet.org/files/ptb-xl/1.0.3/records500/00000
+
+- display all 10 seconds of ecg data in graphical window on Windows using egui
+
+- the time axis should have light ticks (and light grid lines) every 25ms, with bolder ticks (and bolder grid lines) at multiples of 0.5 and 1.0 sec
+
+- cmd line should include an option for leads to display: I, II, III, V1 ... V6, AVL, AVF, AVR
+
+- the cursor should display values for each trace
+
+- use uv to add necessary packages
+
+- write unit tests
 
 ## Tooling
 
-- Python **3.14** (pinned in `.python-version`; `requires-python = ">=3.14"`).
-- Managed with **uv**; build backend is `uv_build` (src layout: the package lives in `src/ecgdisp/`).
+- Pure **Rust** (edition 2024) egui app — egui has no usable Python plotting binding, so the
+  original Python/uv scaffold was replaced; use `cargo add` where the list above says uv.
+- Crates: `eframe`/`egui` (window + custom painting), `clap` (CLI).
+- Layout: `src/wfdb.rs` (WFDB `.hea` + format-16 `.dat` reader, verifies checksums),
+  `src/leads.rs` (lead names, `-l` parsing, selection), `src/layout.rs` (GUI-free math: ticks,
+  time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
+  `src/cli.rs` (args, record path resolution), `src/app.rs` (egui painting), `src/main.rs`.
+- `tests/ptbxl.rs` runs against the real dataset and skips itself when it is absent.
 
 ## Commands
 
 ```sh
-uv sync                 # create .venv and install the project
-uv run ecgdisp          # run the console script (entry point: ecgdisp:main)
-uv add <pkg>            # add a runtime dependency
-uv add --dev <pkg>      # add a dev dependency (e.g. pytest, ruff)
-uv build                # build sdist + wheel
+cargo run -- 1 -l II,V1        # record 00001_hr, leads II and V1 (default: record 1, ALL leads)
+cargo run -- --help
+cargo test
+cargo clippy --all-targets
+cargo add <crate>
 ```
+
+Runs in WSL via WSLg (window appears on the Windows desktop). Screenshot testing without a
+display: `Xvfb :99` + `env -u WAYLAND_DISPLAY DISPLAY=:99 cargo run`.
 
 ## Git
 
-The local branch is `master`, but `main` is the intended main branch for PRs.
+The local branch is `master`, and use master for PRs as well.
