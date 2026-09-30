@@ -2,6 +2,21 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use ecgdisp::{app::EcgApp, cli, leads, wfdb};
+use eframe::{egui_wgpu::WgpuSetup, wgpu};
+
+/// By default wgpu also probes OpenGL. Under WSLg that makes Mesa print
+/// EGL/ZINK warnings even though a Vulkan adapter is chosen in the end, so
+/// only probe the native backends (Vulkan/DX12/Metal) unless `WGPU_BACKEND`
+/// asks for something else (e.g. `WGPU_BACKEND=gl` on a machine without Vulkan).
+fn wgpu_options() -> eframe::WgpuConfiguration {
+    let mut config = eframe::WgpuConfiguration::default();
+    if let WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup
+        && wgpu::Backends::from_env().is_none()
+    {
+        setup.instance_descriptor.backends = wgpu::Backends::PRIMARY;
+    }
+    config
+}
 
 fn main() -> ExitCode {
     let args = cli::Args::parse();
@@ -32,6 +47,7 @@ fn main() -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title(&title)
             .with_inner_size([1600.0, 950.0]),
+        wgpu_options: wgpu_options(),
         ..Default::default()
     };
     let app = EcgApp::new(&record, traces);

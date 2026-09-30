@@ -73,6 +73,12 @@ impl Record {
         self.n_samples() as f64 / self.fs
     }
 
+    /// The record number from the name's leading digits (`00042_hr` → 42).
+    pub fn number(&self) -> Option<u32> {
+        let digits = self.name.split(|c: char| !c.is_ascii_digit()).next()?;
+        digits.parse().ok()
+    }
+
     /// Find a lead by name, ignoring ASCII case ("aVR" matches "AVR").
     pub fn lead(&self, name: &str) -> Option<&Lead> {
         self.leads
@@ -462,6 +468,20 @@ rec.dat 16 1000 16 0 0 0 0 V1
         assert_eq!(rec.duration_s(), 0.02);
         assert_eq!(rec.lead("aVR").unwrap().samples, vec![-0.005, -0.002]);
         assert!(rec.lead("V1").is_none());
+    }
+
+    #[test]
+    fn record_number_comes_from_leading_digits() {
+        let rec = |name: &str| Record {
+            name: name.into(),
+            fs: 500.0,
+            leads: vec![],
+        };
+        assert_eq!(rec("00042_hr").number(), Some(42));
+        assert_eq!(rec("21837_lr").number(), Some(21837));
+        assert_eq!(rec("7").number(), Some(7));
+        assert_eq!(rec("rec").number(), None);
+        assert_eq!(rec("").number(), None);
     }
 
     #[test]

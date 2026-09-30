@@ -18,8 +18,15 @@ pub struct Args {
     pub record: String,
 
     /// Leads to display, comma-separated and/or repeated:
-    /// I, II, III, AVR, AVL, AVF, V1..V6, or ALL (case-insensitive).
-    #[arg(short, long, value_delimiter = ',', value_name = "LEADS")]
+    /// I, II, III, AVR, AVL, AVF, V1..V6, or "all" for all twelve (the default).
+    /// Case-insensitive.
+    #[arg(
+        short,
+        long,
+        value_delimiter = ',',
+        value_name = "LEADS",
+        default_value = "all"
+    )]
     pub leads: Vec<String>,
 
     /// Directory holding the records
@@ -93,8 +100,25 @@ mod tests {
         assert_eq!(a.leads, ["I", "II", "v1"]);
         let a = Args::try_parse_from(["ecgdisp"]).unwrap();
         assert_eq!(a.record, "1");
-        assert!(a.leads.is_empty());
+        assert_eq!(a.leads, ["all"]);
         assert_eq!(a.dir, default_data_dir());
+    }
+
+    #[test]
+    fn lead_option_all_selects_every_lead() {
+        use crate::leads::{LeadName, resolve};
+        for argv in [
+            &["ecgdisp"][..],
+            &["ecgdisp", "-l", "all"],
+            &["ecgdisp", "--leads", "ALL"],
+        ] {
+            let a = Args::try_parse_from(argv).unwrap();
+            assert_eq!(
+                resolve(&a.leads).unwrap(),
+                LeadName::ALL.to_vec(),
+                "{argv:?}"
+            );
+        }
     }
 
     #[test]

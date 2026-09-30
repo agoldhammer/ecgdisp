@@ -8,7 +8,7 @@ use crate::wfdb::{Lead, Record};
 
 const LABEL_W: f32 = 56.0;
 const VALUE_W: f32 = 120.0;
-const HEADER_H: f32 = 28.0;
+const HEADER_H: f32 = 34.0;
 const AXIS_H: f32 = 40.0;
 
 const PAPER: Color32 = Color32::from_rgb(255, 250, 247);
@@ -31,7 +31,8 @@ fn grid_stroke(level: TickLevel) -> (Stroke, f32) {
 }
 
 pub struct EcgApp {
-    record_name: String,
+    /// Shown at the top of the chart, e.g. `Record 1  (00001_hr, 500 Hz)`.
+    title: String,
     fs: f64,
     duration_s: f64,
     leads: Vec<Lead>,
@@ -53,7 +54,7 @@ impl EcgApp {
         let mut ticks = layout::time_ticks(duration_s);
         ticks.sort_by_key(|&(_, level)| level);
         Self {
-            record_name: record.name.clone(),
+            title: record_title(record),
             fs: record.fs,
             duration_s,
             leads,
@@ -141,7 +142,15 @@ impl EcgApp {
         }
         painter.hline(plot.x_range(), plot.top(), Stroke::new(1.0, STRIP_EDGE));
 
-        // Cursor with per-trace read-out.
+        // Title and cursor read-out.
+        let header_y = rect.top() + HEADER_H / 2.0;
+        painter.text(
+            pos2(plot.left(), header_y),
+            Align2::LEFT_CENTER,
+            &self.title,
+            FontId::proportional(18.0),
+            TEXT,
+        );
         let n = self.leads[0].samples.len();
         let Some(idx) = hover
             .filter(|p| plot.y_range().contains(p.y))
@@ -149,12 +158,9 @@ impl EcgApp {
             .and_then(|t| layout::sample_index(t, self.fs, n))
         else {
             painter.text(
-                pos2(plot.left(), rect.top() + HEADER_H / 2.0),
-                Align2::LEFT_CENTER,
-                format!(
-                    "{}   {} Hz   (hover to read values)",
-                    self.record_name, self.fs
-                ),
+                pos2(plot.right(), header_y),
+                Align2::RIGHT_CENTER,
+                "hover to read values",
                 FontId::proportional(14.0),
                 TEXT,
             );
@@ -164,14 +170,11 @@ impl EcgApp {
         let x = axis.time_to_x(t);
         painter.vline(x, plot.y_range(), Stroke::new(1.0, CURSOR));
         painter.text(
-            pos2(plot.left(), rect.top() + HEADER_H / 2.0),
-            Align2::LEFT_CENTER,
-            format!(
-                "{}   {} Hz   t = {t:.3} s  (sample {idx})",
-                self.record_name, self.fs
-            ),
+            pos2(plot.right(), header_y),
+            Align2::RIGHT_CENTER,
+            format!("t = {t:.3} s  (sample {idx})"),
             FontId::proportional(14.0),
-            TEXT,
+            CURSOR,
         );
         for ((lead, range), strip) in self.leads.iter().zip(&self.ranges).zip(&strips) {
             let v = lead.samples.get(idx).copied().unwrap_or(f32::NAN);
@@ -192,9 +195,35 @@ impl EcgApp {
     }
 }
 
+fn record_title(record: &Record) -> String {
+    match record.number() {
+        Some(n) => format!("Record {n}  ({}, {} Hz)", record.name, record.fs),
+        None => format!("Record {}  ({} Hz)", record.name, record.fs),
+    }
+}
+
 impl eframe::App for EcgApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::hover());
         self.paint(&painter, response.rect, response.hover_pos());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_shows_record_number() {
+        let rec = |name: &str| Record {
+            name: name.into(),
+            fs: 500.0,
+            leads: vec![],
+        };
+        assert_eq!(
+            record_title(&rec("00042_hr")),
+            "Record 42  (00042_hr, 500 Hz)"
+        );
+        assert_eq!(record_title(&rec("test")), "Record test  (500 Hz)");
     }
 }
