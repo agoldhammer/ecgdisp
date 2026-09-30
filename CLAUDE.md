@@ -26,7 +26,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Layout: `src/wfdb.rs` (WFDB `.hea` + format-16 `.dat` reader, verifies checksums),
   `src/leads.rs` (lead names, `-l` parsing, selection), `src/layout.rs` (GUI-free math: ticks,
   time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
-  `src/cli.rs` (args, record path resolution), `src/app.rs` (egui painting), `src/main.rs`.
+  `src/cli.rs` (args, record path resolution), `src/nav.rs` (record list for prev/next),
+  `src/app.rs` (egui painting + key handling), `src/main.rs`.
 - `tests/ptbxl.rs` runs against the real dataset and skips itself when it is absent.
 
 ## Commands

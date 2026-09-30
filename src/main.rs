@@ -1,7 +1,8 @@
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use ecgdisp::{app::EcgApp, cli, leads, wfdb};
+use ecgdisp::app::{self, EcgApp};
+use ecgdisp::{cli, leads, nav::RecordList};
 use eframe::{egui_wgpu::WgpuSetup, wgpu};
 
 /// By default wgpu also probes OpenGL. Under WSLg that makes Mesa print
@@ -27,22 +28,15 @@ fn main() -> ExitCode {
     });
     let hea = cli::record_header_path(&args.record, &args.dir);
 
-    let record = match wfdb::load_record(&hea) {
-        Ok(r) => r,
+    let chart = match app::load_chart(&hea, &wanted) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("ecgdisp: cannot load record: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let traces = match leads::select(&record, &wanted) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("ecgdisp: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
 
-    let title = format!("ecgdisp — {}", record.name);
+    let title = app::window_title(&chart);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(&title)
@@ -50,8 +44,8 @@ fn main() -> ExitCode {
         wgpu_options: wgpu_options(),
         ..Default::default()
     };
-    let app = EcgApp::new(&record, traces);
-    match eframe::run_native(&title, options, Box::new(|_cc| Ok(Box::new(app)))) {
+    let app = EcgApp::new(chart, RecordList::scan(&hea), wanted);
+    match eframe::run_native("ecgdisp", options, Box::new(|_cc| Ok(Box::new(app)))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("ecgdisp: {e}");

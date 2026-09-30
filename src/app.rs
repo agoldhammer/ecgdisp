@@ -1,10 +1,14 @@
 //! The egui window: stacked lead traces over a timed grid, with a hover cursor
-//! that reads out every trace's value.
+//! that reads out every trace's value, and previous/next record navigation.
 
-use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, pos2};
+use std::path::Path;
+
+use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, pos2};
 
 use crate::layout::{self, Range, TickLevel, TimeAxis};
-use crate::wfdb::{Lead, Record};
+use crate::leads::{self, LeadName};
+use crate::nav::RecordList;
+use crate::wfdb::{self, Lead, Record};
 
 const LABEL_W: f32 = 56.0;
 const VALUE_W: f32 = 120.0;
@@ -20,6 +24,7 @@ const BASELINE: Color32 = Color32::from_rgb(200, 200, 215);
 const TRACE: Color32 = Color32::from_rgb(20, 20, 60);
 const TEXT: Color32 = Color32::from_rgb(40, 40, 40);
 const CURSOR: Color32 = Color32::from_rgb(0, 110, 200);
+const ERROR: Color32 = Color32::from_rgb(200, 30, 30);
 
 fn grid_stroke(level: TickLevel) -> (Stroke, f32) {
     // (grid line stroke, tick length below the plot)
@@ -30,7 +35,8 @@ fn grid_stroke(level: TickLevel) -> (Stroke, f32) {
     }
 }
 
-pub struct EcgApp {
+/// One record's traces, ready to paint.
+pub struct Chart {
     /// Shown at the top of the chart, e.g. `Record 1  (00001_hr, 500 Hz)`.
     title: String,
     fs: f64,
@@ -41,7 +47,7 @@ pub struct EcgApp {
     ticks: Vec<(f64, TickLevel)>,
 }
 
-impl EcgApp {
+impl Chart {
     /// `leads` are the traces to show, top to bottom.
     pub fn new(record: &Record, leads: Vec<Lead>) -> Self {
         let duration_s = record.duration_s();
@@ -70,7 +76,15 @@ impl EcgApp {
         )
     }
 
-    fn paint(&self, painter: &egui::Painter, rect: Rect, hover: Option<Pos2>) {
+    /// `notice` is drawn in the middle of the header, in `notice_color`.
+    fn paint(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        hover: Option<Pos2>,
+        notice: &str,
+        notice_color: Color32,
+    ) {
         painter.rect_filled(rect, 0.0, PAPER);
         let plot = Rect::from_min_max(
             pos2(rect.left() + LABEL_W, rect.top() + HEADER_H),
@@ -151,6 +165,13 @@ impl EcgApp {
             FontId::proportional(18.0),
             TEXT,
         );
+        painter.text(
+            pos2(plot.center().x, header_y),
+            Align2::CENTER_CENTER,
+            notice,
+            FontId::proportional(14.0),
+            notice_color,
+        );
         let n = self.leads[0].samples.len();
         let Some(idx) = hover
             .filter(|p| plot.y_range().contains(p.y))
@@ -202,16 +223,154 @@ fn record_title(record: &Record) -> String {
     }
 }
 
+/// Load a record and pick out the requested leads.
+pub fn load_chart(hea: &Path, wanted: &[LeadName]) -> Result<Chart, String> {
+    let record = wfdb::load_record(hea).map_err(|e| e.to_string())?;
+    let traces = leads::select(&record, wanted)?;
+    Ok(Chart::new(&record, traces))
+}
+
+pub fn window_title(chart: &Chart) -> String {
+    format!("ecgdisp — {}", chart.title)
+}
+
+pub struct EcgApp {
+    chart: Chart,
+    records: RecordList,
+    wanted: Vec<LeadName>,
+    /// Why the last navigation skipped records, if it did.
+    error: Option<String>,
+}
+
+impl EcgApp {
+    /// `chart` must be the record at `records.current()`.
+    pub fn new(chart: Chart, records: RecordList, wanted: Vec<LeadName>) -> Self {
+        Self {
+            chart,
+            records,
+            wanted,
+            error: None,
+        }
+    }
+
+    /// Move `step` (±1) records, skipping any that fail to load.
+    /// Returns true if the displayed record changed.
+    fn navigate(&mut self, step: isize) -> bool {
+        let mut errors = Vec::new();
+        let mut loaded = None;
+        for (index, path) in self.records.candidates(step) {
+            match load_chart(path, &self.wanted) {
+                Ok(chart) => {
+                    loaded = Some((index, chart));
+                    break;
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+        self.error = match errors.len() {
+            0 => None,
+            1 => Some(format!("skipped: {}", errors[0])),
+            n => Some(format!("skipped {n} records; last: {}", errors[n - 1])),
+        };
+        match loaded {
+            Some((index, chart)) => {
+                self.records.set_current(index);
+                self.chart = chart;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn notice(&self) -> (String, Color32) {
+        if let Some(e) = &self.error {
+            return (e.clone(), ERROR);
+        }
+        let (pos, total) = self.records.position();
+        (
+            format!("{pos} of {total} in folder  ·  Left / Right or PgUp / PgDn: previous / next"),
+            TEXT,
+        )
+    }
+}
+
 impl eframe::App for EcgApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let step = ui.input(|i| {
+            if i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::PageUp) {
+                -1
+            } else if i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::PageDown) {
+                1
+            } else {
+                0
+            }
+        });
+        if step != 0 && self.navigate(step) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Title(window_title(&self.chart)));
+        }
+        let (notice, color) = self.notice();
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::hover());
-        self.paint(&painter, response.rect, response.hover_pos());
+        self.chart.paint(
+            &painter,
+            response.rect,
+            response.hover_pos(),
+            &notice,
+            color,
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Write a one-lead, two-sample record `name` into `dir`.
+    fn write_record(dir: &Path, name: &str, with_data: bool) {
+        std::fs::write(
+            dir.join(format!("{name}.hea")),
+            format!("{name} 1 500 2\n{name}.dat 16 1000(0)/mV 16 0 0 0 0 II\n"),
+        )
+        .unwrap();
+        if with_data {
+            std::fs::write(dir.join(format!("{name}.dat")), [0u8; 4]).unwrap();
+        }
+    }
+
+    #[test]
+    fn navigation_steps_between_records_and_skips_broken_ones() {
+        let dir = std::env::temp_dir().join(format!("ecgdisp-app-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_record(&dir, "00001_hr", true);
+        write_record(&dir, "00002_hr", false); // .dat missing
+        write_record(&dir, "00003_hr", true);
+        let wanted = vec![LeadName::II];
+        let start = dir.join("00001_hr.hea");
+        let chart = load_chart(&start, &wanted).unwrap();
+        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted);
+
+        let back_at_start = app.navigate(-1);
+        let forward = app.navigate(1);
+        let (fwd_title, fwd_pos, fwd_err) = (
+            app.chart.title.clone(),
+            app.records.position(),
+            app.error.clone(),
+        );
+        let past_end = app.navigate(1);
+        let end_err = app.error.clone();
+        let back = app.navigate(-1);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(!back_at_start, "nothing before the first record");
+        assert!(forward);
+        assert!(fwd_title.starts_with("Record 3 "), "{fwd_title}");
+        assert_eq!(fwd_pos, (3, 3));
+        assert!(fwd_err.unwrap().contains("00002_hr.dat"));
+        assert!(!past_end);
+        assert_eq!(end_err, None);
+        assert!(back);
+        assert!(app.chart.title.starts_with("Record 1 "));
+    }
 
     #[test]
     fn title_shows_record_number() {
