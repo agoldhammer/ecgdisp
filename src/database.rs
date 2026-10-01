@@ -130,8 +130,60 @@ fn cell_sex(d: &Data) -> Option<Sex> {
 fn cell_text(d: &Data) -> String {
     match d {
         Data::Empty => String::new(),
-        d => d.to_string().trim().to_owned(),
+        d => fix_mojibake(d.to_string().trim()),
     }
+}
+
+/// The byte Windows-1252 encodes `c` as, if any. Its five undefined bytes
+/// (0x81, 0x8D, 0x8F, 0x90, 0x9D) pass through as the same code points.
+fn cp1252_byte(c: char) -> Option<u8> {
+    const HIGH: [(char, u8); 27] = [
+        ('€', 0x80),
+        ('‚', 0x82),
+        ('ƒ', 0x83),
+        ('„', 0x84),
+        ('…', 0x85),
+        ('†', 0x86),
+        ('‡', 0x87),
+        ('ˆ', 0x88),
+        ('‰', 0x89),
+        ('Š', 0x8A),
+        ('‹', 0x8B),
+        ('Œ', 0x8C),
+        ('Ž', 0x8E),
+        ('\u{2018}', 0x91),
+        ('\u{2019}', 0x92),
+        ('\u{201C}', 0x93),
+        ('\u{201D}', 0x94),
+        ('•', 0x95),
+        ('–', 0x96),
+        ('—', 0x97),
+        ('˜', 0x98),
+        ('™', 0x99),
+        ('š', 0x9A),
+        ('›', 0x9B),
+        ('œ', 0x9C),
+        ('ž', 0x9E),
+        ('Ÿ', 0x9F),
+    ];
+    match c as u32 {
+        0..=0x7F | 0xA0..=0xFF | 0x81 | 0x8D | 0x8F..=0x90 | 0x9D => Some(c as u8),
+        _ => HIGH.iter().find(|&&(h, _)| h == c).map(|&(_, b)| b),
+    }
+}
+
+/// Undo UTF-8 text that was decoded as Windows-1252, as in the PTB-XL
+/// spreadsheet's reports (`vÃ„nster` → `vÄnster`). Text that does not
+/// round-trip to valid UTF-8 is returned unchanged.
+fn fix_mojibake(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_owned();
+    }
+    s.chars()
+        .map(cp1252_byte)
+        .collect::<Option<Vec<u8>>>()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| s.to_owned())
 }
 
 /// The `ecg_id` of the record whose header is `hea`: the leading digits of
@@ -260,6 +312,29 @@ mod tests {
         assert_eq!(with_sex(s("1")), Some(Sex::Female));
         assert_eq!(with_sex(Data::Float(2.0)), None);
         assert_eq!(with_sex(Data::Empty), None);
+    }
+
+    #[test]
+    fn mojibake_is_repaired() {
+        // Report texts as found in ptbxl_database.xlsx (ecg_id 49, 180, 18, 2284).
+        assert_eq!(
+            fix_mojibake("intraventrikulÃ„re leitungsstÃ–rung"),
+            "intraventrikulÄre leitungsstÖrung"
+        );
+        assert_eq!(
+            fix_mojibake("sinusrytm vÃ„nster el-axel vÃ„nstersidigt skÃ„nkelblock"),
+            "sinusrytm vÄnster el-axel vÄnstersidigt skÄnkelblock"
+        );
+        assert_eq!(fix_mojibake("Ãœberleitung"), "Überleitung");
+        assert_eq!(
+            fix_mojibake("auszuschlieÃŸen erhÃ¶hte"),
+            "auszuschließen erhöhte"
+        );
+        // Correct text, and text that is not mojibake, are left alone.
+        assert_eq!(fix_mojibake("vänster"), "vänster");
+        assert_eq!(fix_mojibake("Ã alone"), "Ã alone");
+        assert_eq!(fix_mojibake("40° → 50°"), "40° → 50°");
+        assert_eq!(cell_text(&s(" sÃ…som ")), "sÅsom");
     }
 
     #[test]
