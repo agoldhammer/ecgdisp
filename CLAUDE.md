@@ -25,7 +25,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `src/leads.rs` (lead names, `-l` parsing, selection), `src/layout.rs` (GUI-free math: ticks,
   time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
   `src/cli.rs` (args, record path resolution), `src/nav.rs` (record list for prev/next),
-  `src/database.rs` (`ptbxl_database.xlsx` lookup by ecg_id; prints columns K/L/M per record),
+  `src/database.rs` (`ptbxl_database.xlsx` lookup by ecg_id; prints columns K/L/M per record,
+  reads sex from D), `src/dsp.rs` (scipy/numpy equivalents: Butterworth SOS, `sosfiltfilt`,
+  `find_peaks`, …), `src/analysis.rs` (port of `../ekgdata/src/ekgdata/analyze.py`: QRS
+  detection, HR/RR, PR/QRS/QT, axis, LVH voltage — keep it matching the Python output),
   `src/titlebar.rs` (own title bar/border/resize edges, used in WSL), `src/app.rs` (egui painting
   + key handling), `src/main.rs`.
 - `tests/ptbxl.rs` runs against the real dataset and skips itself when it is absent.

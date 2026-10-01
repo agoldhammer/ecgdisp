@@ -1,6 +1,6 @@
 //! Checks against the real PTB-XL records; skipped when the dataset is absent.
 
-use ecgdisp::{cli, database, leads, wfdb};
+use ecgdisp::{analysis, cli, database, leads, wfdb};
 
 fn load(record: &str) -> Option<wfdb::Record> {
     let hea = cli::record_header_path(record, &cli::default_data_dir()).unwrap();
@@ -64,4 +64,80 @@ fn database_row_for_record_00001() {
     assert_eq!(info.report, "sinusrhythmus periphere niederspannung");
     assert_eq!(info.scp_codes, "{'NORM': 100.0, 'LVOLT': 0.0, 'SR': 0.0}");
     assert_eq!(info.heart_axis, "");
+}
+
+/// Values printed by `ekg-analyze` (../ekgdata) for the same records.
+#[test]
+fn analysis_matches_the_python_analyzer() {
+    let round = |v: f64| v.round() as i64;
+    for (record, beats, hr, rr_sd, pr, qrs, wide, qt, qtc, axis, lvh) in [
+        (
+            "1",
+            11,
+            64,
+            16,
+            70,
+            152,
+            false,
+            436,
+            450,
+            18,
+            [1.23, 0.97, 0.42],
+        ),
+        (
+            "984",
+            10,
+            61,
+            34,
+            138,
+            92,
+            false,
+            394,
+            400,
+            -24,
+            [2.21, 2.30, 1.21],
+        ),
+        (
+            "180",
+            15,
+            93,
+            7,
+            156,
+            190,
+            true,
+            372,
+            462,
+            -23,
+            [4.47, 6.14, 1.18],
+        ),
+    ] {
+        let Some(rec) = load(record) else { return };
+        let a = analysis::analyze(&rec).unwrap();
+        let iv = a.intervals.as_ref().unwrap();
+        let l = a.lvh.as_ref().unwrap();
+        assert_eq!(a.qrs.len(), beats, "{record}");
+        assert_eq!(round(a.hr_bpm), hr, "{record}");
+        assert_eq!(round(a.rr_sd_ms), rr_sd, "{record}");
+        assert_eq!(iv.pr_ms.map(round), Some(pr), "{record}");
+        assert_eq!((round(iv.qrs_ms), iv.qrs_wide), (qrs, wide), "{record}");
+        assert_eq!(round(iv.qt_ms), qt, "{record}");
+        assert_eq!(round(iv.qtc_bazett_ms), qtc, "{record}");
+        assert_eq!(round(a.qrs_axis_deg.unwrap()), axis, "{record}");
+        let got = [l.sokolow_lyon, l.cornell, l.ravl].map(|v| (v * 100.0).round() / 100.0);
+        assert_eq!(got, lvh, "{record}");
+    }
+}
+
+#[test]
+fn record_180_is_flagged_for_wide_qrs_and_lvh_voltage() {
+    let Some(rec) = load("180") else { return };
+    let a = analysis::analyze(&rec).unwrap();
+    assert!(
+        a.summary()
+            .iter()
+            .any(|i| i.text == "QRS ≥190 ms" && i.alert)
+    );
+    let v = a.voltage(None);
+    assert!(v[0].text.starts_with("Sokolow-Lyon") && v[0].alert);
+    assert!(v.iter().any(|i| i.text.contains("700 ms beat window")));
 }

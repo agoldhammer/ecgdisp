@@ -2,7 +2,8 @@
 //!
 //! Rows are keyed by `ecg_id` (column A), which is the record number built
 //! from the directory prefix and the three-digit number (`01005_hr` → 1005).
-//! Columns K, L and M hold the report, the SCP codes and the heart axis.
+//! Columns K, L and M hold the report, the SCP codes and the heart axis;
+//! column D holds the patient's sex (0 = male, 1 = female).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -10,10 +11,13 @@ use std::path::{Path, PathBuf};
 
 use calamine::{Data, Reader, Xlsx, open_workbook};
 
+use crate::analysis::Sex;
+
 pub const FILE_NAME: &str = "ptbxl_database.xlsx";
 
-/// Zero-based spreadsheet columns: A = ecg_id, K = report, L = scp_codes, M = heart_axis.
+/// Zero-based spreadsheet columns: A = ecg_id, D = sex, K = report, L = scp_codes, M = heart_axis.
 const ID_COL: usize = 0;
+const SEX_COL: usize = 3;
 const INFO_COLS: [usize; 3] = [10, 11, 12];
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -21,6 +25,7 @@ pub struct RecordInfo {
     pub report: String,
     pub scp_codes: String,
     pub heart_axis: String,
+    pub sex: Option<Sex>,
 }
 
 impl fmt::Display for RecordInfo {
@@ -79,6 +84,7 @@ impl Database {
                     report,
                     scp_codes,
                     heart_axis,
+                    sex: cell_sex(cell(SEX_COL)),
                 },
             );
         }
@@ -103,6 +109,20 @@ fn cell_id(d: &Data) -> Option<u32> {
         Data::Int(i) => u32::try_from(*i).ok(),
         Data::Float(f) if f.fract() == 0.0 && *f >= 0.0 && *f <= u32::MAX as f64 => Some(*f as u32),
         Data::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn cell_sex(d: &Data) -> Option<Sex> {
+    let v = match d {
+        Data::Int(i) => *i as f64,
+        Data::Float(f) => *f,
+        Data::String(s) => s.trim().parse().ok()?,
+        _ => return None,
+    };
+    match v {
+        0.0 => Some(Sex::Male),
+        1.0 => Some(Sex::Female),
         _ => None,
     }
 }
@@ -207,10 +227,12 @@ mod tests {
                 report: "sinusrhythmus".into(),
                 scp_codes: "{'NORM': 100.0}".into(),
                 heart_axis: String::new(),
+                sex: None,
             })
         );
         let r = d.get(1005).unwrap();
         assert_eq!((r.report.as_str(), r.heart_axis.as_str()), ("lvh", "LAD"));
+        assert_eq!(r.sex, None);
         assert!(d.get(2).is_none());
     }
 
@@ -224,6 +246,20 @@ mod tests {
         ]);
         assert_eq!(d.len(), 1);
         assert_eq!(d.get(7), Some(&RecordInfo::default()));
+    }
+
+    #[test]
+    fn sex_comes_from_column_d() {
+        let with_sex = |sex: Data| {
+            let mut r = row(Data::Int(1), s("x"), s("y"), s("z"));
+            r[3] = sex;
+            db(&[r]).get(1).unwrap().sex
+        };
+        assert_eq!(with_sex(Data::Float(0.0)), Some(Sex::Male));
+        assert_eq!(with_sex(Data::Int(1)), Some(Sex::Female));
+        assert_eq!(with_sex(s("1")), Some(Sex::Female));
+        assert_eq!(with_sex(Data::Float(2.0)), None);
+        assert_eq!(with_sex(Data::Empty), None);
     }
 
     #[test]

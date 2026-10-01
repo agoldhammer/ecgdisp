@@ -1,10 +1,12 @@
 //! The egui window: stacked lead traces over a timed grid, with a hover cursor
-//! that reads out every trace's value, and previous/next record navigation.
+//! that reads out every trace's value, automated measurements (rate, intervals,
+//! axis, LVH voltage) above the traces, and previous/next record navigation.
 
 use std::path::Path;
 
 use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, pos2};
 
+use crate::analysis::{self, Analysis, Item, Sex};
 use crate::database::{self, Database};
 use crate::layout::{self, Range, TickLevel, TimeAxis};
 use crate::leads::{self, LeadName};
@@ -17,6 +19,10 @@ const VALUE_W: f32 = 120.0;
 const HEADER_H: f32 = 34.0;
 /// Extra header line for the database report, when there is one.
 const REPORT_H: f32 = 22.0;
+/// Each line of the measurement read-out.
+const MEASURE_H: f32 = 20.0;
+/// Band above the traces holding a marker per detected QRS complex.
+const QRS_MARK_H: f32 = 10.0;
 const AXIS_H: f32 = 40.0;
 
 const PAPER: Color32 = Color32::from_rgb(255, 250, 247);
@@ -29,6 +35,9 @@ const TRACE: Color32 = Color32::from_rgb(20, 20, 60);
 const TEXT: Color32 = Color32::from_rgb(40, 40, 40);
 const CURSOR: Color32 = Color32::from_rgb(0, 110, 200);
 const ERROR: Color32 = Color32::from_rgb(200, 30, 30);
+const MEASURE: Color32 = Color32::from_rgb(20, 70, 40);
+const ALERT: Color32 = Color32::from_rgb(190, 60, 0);
+const QRS_MARK: Color32 = Color32::from_rgb(0, 130, 90);
 
 fn grid_stroke(level: TickLevel) -> (Stroke, f32) {
     // (grid line stroke, tick length below the plot)
@@ -49,10 +58,12 @@ pub struct Chart {
     ranges: Vec<Range>,
     /// Sorted by level so bolder lines are drawn on top of lighter ones.
     ticks: Vec<(f64, TickLevel)>,
+    /// Measurements over all of the record's leads, not just the ones shown.
+    analysis: Result<Analysis, String>,
 }
 
 impl Chart {
-    /// `leads` are the traces to show, top to bottom.
+    /// `leads` are the traces to show, top to bottom; `record` is analyzed in full.
     pub fn new(record: &Record, leads: Vec<Lead>) -> Self {
         let duration_s = record.duration_s();
         let ranges = layout::strip_ranges(
@@ -70,6 +81,21 @@ impl Chart {
             leads,
             ranges,
             ticks,
+            analysis: analysis::analyze(record),
+        }
+    }
+
+    /// Read-out lines: rhythm/intervals/axis, then LVH voltage and cautions.
+    fn measurement_lines(&self, sex: Option<Sex>) -> Vec<Vec<Item>> {
+        match &self.analysis {
+            Ok(a) => vec![a.summary(), a.voltage(sex)]
+                .into_iter()
+                .filter(|l| !l.is_empty())
+                .collect(),
+            Err(e) => vec![vec![Item {
+                text: format!("no measurements: {e}"),
+                alert: true,
+            }]],
         }
     }
 
@@ -81,7 +107,9 @@ impl Chart {
     }
 
     /// `notice` is drawn in the middle of the header, in `notice_color`;
-    /// a non-empty `report` gets a line of its own below the title.
+    /// a non-empty `report` gets a line of its own below the title, followed
+    /// by the measurements (`sex` picks the Cornell voltage threshold).
+    #[allow(clippy::too_many_arguments)]
     fn paint(
         &self,
         painter: &egui::Painter,
@@ -90,11 +118,15 @@ impl Chart {
         notice: &str,
         notice_color: Color32,
         report: &str,
+        sex: Option<Sex>,
     ) {
         painter.rect_filled(rect, 0.0, PAPER);
         let report_h = if report.is_empty() { 0.0 } else { REPORT_H };
+        let measurements = self.measurement_lines(sex);
+        let measure_top = rect.top() + HEADER_H + report_h;
+        let measure_h = measurements.len() as f32 * MEASURE_H;
         let plot = Rect::from_min_max(
-            pos2(rect.left() + LABEL_W, rect.top() + HEADER_H + report_h),
+            pos2(rect.left() + LABEL_W, measure_top + measure_h + QRS_MARK_H),
             pos2(rect.right() - VALUE_W, rect.bottom() - AXIS_H),
         );
         if plot.width() < 10.0 || plot.height() < 10.0 || self.leads.is_empty() {
@@ -163,6 +195,19 @@ impl Chart {
         }
         painter.hline(plot.x_range(), plot.top(), Stroke::new(1.0, STRIP_EDGE));
 
+        // Detected QRS complexes: a small triangle above the traces.
+        if let Ok(a) = &self.analysis {
+            for &i in &a.qrs {
+                let x = axis.time_to_x(i as f64 / self.fs);
+                let (top, tip) = (plot.top() - QRS_MARK_H + 1.0, plot.top() - 1.0);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![pos2(x - 4.0, top), pos2(x + 4.0, top), pos2(x, tip)],
+                    QRS_MARK,
+                    Stroke::NONE,
+                ));
+            }
+        }
+
         // Title and cursor read-out.
         let header_y = rect.top() + HEADER_H / 2.0;
         painter.text(
@@ -182,7 +227,7 @@ impl Chart {
         if !report.is_empty() {
             let line = Rect::from_min_max(
                 pos2(plot.left(), rect.top() + HEADER_H),
-                pos2(plot.right(), plot.top()),
+                pos2(plot.right(), rect.top() + HEADER_H + REPORT_H),
             );
             painter.with_clip_rect(line).text(
                 pos2(line.left(), line.center().y - 2.0),
@@ -191,6 +236,14 @@ impl Chart {
                 FontId::proportional(15.0),
                 TEXT,
             );
+        }
+        for (k, items) in measurements.iter().enumerate() {
+            let top = measure_top + k as f32 * MEASURE_H;
+            let line = Rect::from_min_max(
+                pos2(plot.left(), top),
+                pos2(rect.right() - 8.0, top + MEASURE_H),
+            );
+            paint_items(&painter.with_clip_rect(line), line, items);
         }
         let n = self.leads[0].samples.len();
         let Some(idx) = hover
@@ -236,6 +289,30 @@ impl Chart {
     }
 }
 
+/// Draw `items` left to right along `line`, separated by dots, alerts in `ALERT`.
+fn paint_items(painter: &egui::Painter, line: Rect, items: &[Item]) {
+    let font = FontId::proportional(14.0);
+    let mut x = line.left();
+    let y = line.center().y;
+    for (k, item) in items.iter().enumerate() {
+        if k > 0 {
+            x += painter
+                .text(pos2(x, y), Align2::LEFT_CENTER, "  ·  ", font.clone(), TEXT)
+                .width();
+        }
+        let color = if item.alert { ALERT } else { MEASURE };
+        x += painter
+            .text(
+                pos2(x, y),
+                Align2::LEFT_CENTER,
+                &item.text,
+                font.clone(),
+                color,
+            )
+            .width();
+    }
+}
+
 fn record_title(record: &Record) -> String {
     match record.number() {
         Some(n) => format!("Record {n}  ({}, {} Hz)", record.name, record.fs),
@@ -262,6 +339,8 @@ pub struct EcgApp {
     db: Option<Database>,
     /// The current record's report text from `db` (empty if unavailable).
     report: String,
+    /// The current patient's sex from `db`, for the Cornell LVH threshold.
+    sex: Option<Sex>,
     /// Draw our own title bar, border and resize edges (window has no frame).
     custom_frame: bool,
     /// Why the last navigation skipped records, if it did.
@@ -283,6 +362,7 @@ impl EcgApp {
             wanted,
             db,
             report: String::new(),
+            sex: None,
             custom_frame,
             error: None,
         };
@@ -291,14 +371,14 @@ impl EcgApp {
     }
 
     /// Print the current record's spreadsheet row (columns K, L, M) and
-    /// keep its report for the chart header.
+    /// keep its report and the patient's sex for the chart header.
     fn show_info(&mut self) {
         let Some(db) = &self.db else { return };
         let hea = self.records.current();
         println!("{}", database::describe(db, hea));
-        self.report = database::ecg_id(hea)
-            .and_then(|id| db.get(id))
-            .map_or_else(String::new, |info| info.report.clone());
+        let info = database::ecg_id(hea).and_then(|id| db.get(id));
+        self.report = info.map_or_else(String::new, |info| info.report.clone());
+        self.sex = info.and_then(|info| info.sex);
     }
 
     /// Move `step` (±1) records, skipping any that fail to load.
@@ -376,6 +456,7 @@ impl eframe::App for EcgApp {
             &notice,
             color,
             &self.report,
+            self.sex,
         );
         if self.custom_frame {
             titlebar::border(ui, window);
