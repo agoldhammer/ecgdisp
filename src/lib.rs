@@ -6,4 +6,5 @@ pub mod database;
 pub mod layout;
 pub mod leads;
 pub mod nav;
+pub mod titlebar;
 pub mod wfdb;

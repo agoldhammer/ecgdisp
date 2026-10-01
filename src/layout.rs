@@ -1,5 +1,5 @@
 //! GUI-independent geometry: time-axis ticks, time/pixel mapping, cursor
-//! sample lookup and vertical scaling of the traces.
+//! sample lookup, vertical scaling of the traces and window-edge hit testing.
 
 /// Spacing of the light grid lines, in milliseconds.
 pub const MINOR_TICK_MS: u64 = 25;
@@ -160,6 +160,61 @@ pub fn format_value(v: f32, units: &str) -> String {
     }
 }
 
+/// A window edge or corner that can be dragged to resize the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// The edge or corner of the window `left..right` × `top..bottom` that a
+/// pointer at (`x`, `y`) would resize: within `margin` of a side, or within
+/// `margin` of one side and `corner` of the adjacent one for a corner.
+/// `None` in the interior and outside the window.
+#[allow(clippy::too_many_arguments)]
+pub fn resize_edge(
+    x: f32,
+    y: f32,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    margin: f32,
+    corner: f32,
+) -> Option<Edge> {
+    let (t, b, l, r) = (y - top, bottom - y, x - left, right - x);
+    if t < 0.0 || b < 0.0 || l < 0.0 || r < 0.0 {
+        return None;
+    }
+    let (n, s, w, e) = (t < margin, b < margin, l < margin, r < margin);
+    let (n_c, s_c, w_c, e_c) = (t < corner, b < corner, l < corner, r < corner);
+    Some(if (n && w_c) || (w && n_c) {
+        Edge::NorthWest
+    } else if (n && e_c) || (e && n_c) {
+        Edge::NorthEast
+    } else if (s && w_c) || (w && s_c) {
+        Edge::SouthWest
+    } else if (s && e_c) || (e && s_c) {
+        Edge::SouthEast
+    } else if n {
+        Edge::North
+    } else if s {
+        Edge::South
+    } else if w {
+        Edge::West
+    } else if e {
+        Edge::East
+    } else {
+        return None;
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +331,38 @@ mod tests {
         assert!((r[0].hi - r[0].lo - span).abs() < 1e-6);
         assert!(((r[0].lo + r[0].hi) / 2.0 - 0.3).abs() < 1e-6);
         assert_eq!((r[1].lo + r[1].hi) / 2.0, 0.0);
+    }
+
+    #[test]
+    fn resize_edges_and_corners() {
+        // Window 0..100 × 0..80, 5 px edges, 15 px corners.
+        let at = |x, y| resize_edge(x, y, 0.0, 0.0, 100.0, 80.0, 5.0, 15.0);
+        assert_eq!(at(50.0, 40.0), None);
+        assert_eq!(at(50.0, 2.0), Some(Edge::North));
+        assert_eq!(at(50.0, 78.0), Some(Edge::South));
+        assert_eq!(at(1.0, 40.0), Some(Edge::West));
+        assert_eq!(at(99.0, 40.0), Some(Edge::East));
+        assert_eq!(at(1.0, 1.0), Some(Edge::NorthWest));
+        assert_eq!(
+            at(10.0, 2.0),
+            Some(Edge::NorthWest),
+            "along the top, near the corner"
+        );
+        assert_eq!(
+            at(2.0, 10.0),
+            Some(Edge::NorthWest),
+            "along the left, near the corner"
+        );
+        assert_eq!(at(90.0, 2.0), Some(Edge::NorthEast));
+        assert_eq!(at(2.0, 70.0), Some(Edge::SouthWest));
+        assert_eq!(at(98.0, 75.0), Some(Edge::SouthEast));
+        assert_eq!(at(20.0, 2.0), Some(Edge::North), "past the corner zone");
+        assert_eq!(
+            at(10.0, 10.0),
+            None,
+            "inside the corner zone but off the edges"
+        );
+        assert_eq!(at(-1.0, 40.0), None);
+        assert_eq!(at(50.0, 81.0), None);
     }
 }

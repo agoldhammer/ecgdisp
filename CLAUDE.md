@@ -26,7 +26,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
   `src/cli.rs` (args, record path resolution), `src/nav.rs` (record list for prev/next),
   `src/database.rs` (`ptbxl_database.xlsx` lookup by ecg_id; prints columns K/L/M per record),
-  `src/app.rs` (egui painting + key handling), `src/main.rs`.
+  `src/titlebar.rs` (own title bar/border/resize edges, used in WSL), `src/app.rs` (egui painting
+  + key handling), `src/main.rs`.
 - `tests/ptbxl.rs` runs against the real dataset and skips itself when it is absent.
 
 ## Commands
@@ -39,7 +40,9 @@ cargo clippy --all-targets
 cargo add <crate>
 ```
 
-Runs in WSL via WSLg (window appears on the Windows desktop). Screenshot testing without a
+Runs in WSL via WSLg (window appears on the Windows desktop). In WSL the window has no winit
+frame and draws its own title bar: winit's Wayland frame leaves a ghost shadow after maximizing,
+and X11 windows get no mouse pointer over their contents under WSLg. Screenshot testing without a
 display: `Xvfb :99` + `env -u WAYLAND_DISPLAY DISPLAY=:99 cargo run`.
 
 ## Git

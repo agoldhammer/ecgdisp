@@ -19,31 +19,16 @@ fn wgpu_options() -> eframe::WgpuConfiguration {
     config
 }
 
-/// Under WSLg, winit's Wayland backend draws client-side decorations whose
-/// drop shadow is left behind on the Windows desktop when the window is
-/// maximized. Through X11 (XWayland) WSLg gives the window a native frame
-/// instead, so use X11 when running in WSL with an X display available.
-fn prefer_x11(kernel_release: &str, has_x_display: bool) -> bool {
-    has_x_display && kernel_release.to_ascii_lowercase().contains("microsoft")
+/// Under WSLg, winit's Wayland frame (client-side decorations) leaves its drop
+/// shadow behind on the Windows desktop when the window is maximized, and
+/// X11 windows get no mouse pointer over their contents. So in WSL the window
+/// stays on Wayland but without winit's frame, and the app draws its own.
+fn is_wsl(kernel_release: &str) -> bool {
+    kernel_release.to_ascii_lowercase().contains("microsoft")
 }
 
-#[cfg(target_os = "linux")]
-fn event_loop_builder() -> Option<eframe::EventLoopBuilderHook> {
-    use winit::platform::x11::EventLoopBuilderExtX11;
-    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
-    let has_x_display = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
-    prefer_x11(&release, has_x_display).then(|| {
-        Box::new(
-            |builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>| {
-                builder.with_x11();
-            },
-        ) as eframe::EventLoopBuilderHook
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn event_loop_builder() -> Option<eframe::EventLoopBuilderHook> {
-    None
+fn running_in_wsl() -> bool {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease").is_ok_and(|r| is_wsl(&r))
 }
 
 fn main() -> ExitCode {
@@ -81,16 +66,17 @@ fn main() -> ExitCode {
         }
     };
 
+    let custom_frame = running_in_wsl();
     let title = app::window_title(&chart);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(&title)
-            .with_inner_size([1600.0, 950.0]),
+            .with_inner_size([1600.0, 950.0])
+            .with_decorations(!custom_frame),
         wgpu_options: wgpu_options(),
-        event_loop_builder: event_loop_builder(),
         ..Default::default()
     };
-    let app = EcgApp::new(chart, RecordList::scan(&hea), wanted, db);
+    let app = EcgApp::new(chart, RecordList::scan(&hea), wanted, db, custom_frame);
     match eframe::run_native("ecgdisp", options, Box::new(|_cc| Ok(Box::new(app)))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -102,15 +88,13 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::prefer_x11;
+    use super::is_wsl;
 
     #[test]
-    fn x11_is_preferred_only_in_wsl_with_a_display() {
-        let wsl = "6.18.35.2-microsoft-standard-WSL2\n";
-        assert!(prefer_x11(wsl, true));
-        assert!(prefer_x11("4.4.0-19041-Microsoft", true));
-        assert!(!prefer_x11(wsl, false));
-        assert!(!prefer_x11("6.8.0-45-generic", true));
-        assert!(!prefer_x11("", true));
+    fn wsl_is_detected_from_the_kernel_release() {
+        assert!(is_wsl("6.18.35.2-microsoft-standard-WSL2\n"));
+        assert!(is_wsl("4.4.0-19041-Microsoft"));
+        assert!(!is_wsl("6.8.0-45-generic"));
+        assert!(!is_wsl(""));
     }
 }

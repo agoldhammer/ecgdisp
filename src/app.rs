@@ -9,6 +9,7 @@ use crate::database::{self, Database};
 use crate::layout::{self, Range, TickLevel, TimeAxis};
 use crate::leads::{self, LeadName};
 use crate::nav::RecordList;
+use crate::titlebar;
 use crate::wfdb::{self, Lead, Record};
 
 const LABEL_W: f32 = 56.0;
@@ -261,6 +262,8 @@ pub struct EcgApp {
     db: Option<Database>,
     /// The current record's report text from `db` (empty if unavailable).
     report: String,
+    /// Draw our own title bar, border and resize edges (window has no frame).
+    custom_frame: bool,
     /// Why the last navigation skipped records, if it did.
     error: Option<String>,
 }
@@ -272,6 +275,7 @@ impl EcgApp {
         records: RecordList,
         wanted: Vec<LeadName>,
         db: Option<Database>,
+        custom_frame: bool,
     ) -> Self {
         let mut app = Self {
             chart,
@@ -279,6 +283,7 @@ impl EcgApp {
             wanted,
             db,
             report: String::new(),
+            custom_frame,
             error: None,
         };
         app.show_info();
@@ -354,15 +359,27 @@ impl eframe::App for EcgApp {
                 .send_viewport_cmd(egui::ViewportCommand::Title(window_title(&self.chart)));
         }
         let (notice, color) = self.notice();
-        let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::hover());
+        let window = ui.max_rect();
+        let chart_rect = if self.custom_frame {
+            let on_edge = titlebar::resize_edges(ui, window);
+            let (bar, rest) = window.split_top_bottom_at_y(window.top() + titlebar::HEIGHT);
+            titlebar::title_bar(ui, bar, &window_title(&self.chart), on_edge);
+            rest
+        } else {
+            window
+        };
+        let response = ui.allocate_rect(chart_rect, Sense::hover());
         self.chart.paint(
-            &painter,
-            response.rect,
+            &ui.painter_at(chart_rect),
+            chart_rect,
             response.hover_pos(),
             &notice,
             color,
             &self.report,
         );
+        if self.custom_frame {
+            titlebar::border(ui, window);
+        }
     }
 }
 
@@ -392,7 +409,7 @@ mod tests {
         let wanted = vec![LeadName::II];
         let start = dir.join("00001_hr.hea");
         let chart = load_chart(&start, &wanted).unwrap();
-        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, None);
+        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, None, false);
 
         let back_at_start = app.navigate(-1);
         let forward = app.navigate(1);
@@ -435,7 +452,7 @@ mod tests {
         let wanted = vec![LeadName::II];
         let start = dir.join("00001_hr.hea");
         let chart = load_chart(&start, &wanted).unwrap();
-        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, Some(db));
+        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, Some(db), false);
         let first = app.report.clone();
         app.navigate(1);
         let second = app.report.clone();
