@@ -14,8 +14,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - the cursor should display values for each trace
 
-- use uv to add necessary packages
-
 - write unit tests
 
 ## Tooling
