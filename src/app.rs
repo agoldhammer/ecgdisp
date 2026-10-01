@@ -14,6 +14,8 @@ use crate::wfdb::{self, Lead, Record};
 const LABEL_W: f32 = 56.0;
 const VALUE_W: f32 = 120.0;
 const HEADER_H: f32 = 34.0;
+/// Extra header line for the database report, when there is one.
+const REPORT_H: f32 = 22.0;
 const AXIS_H: f32 = 40.0;
 
 const PAPER: Color32 = Color32::from_rgb(255, 250, 247);
@@ -77,7 +79,8 @@ impl Chart {
         )
     }
 
-    /// `notice` is drawn in the middle of the header, in `notice_color`.
+    /// `notice` is drawn in the middle of the header, in `notice_color`;
+    /// a non-empty `report` gets a line of its own below the title.
     fn paint(
         &self,
         painter: &egui::Painter,
@@ -85,10 +88,12 @@ impl Chart {
         hover: Option<Pos2>,
         notice: &str,
         notice_color: Color32,
+        report: &str,
     ) {
         painter.rect_filled(rect, 0.0, PAPER);
+        let report_h = if report.is_empty() { 0.0 } else { REPORT_H };
         let plot = Rect::from_min_max(
-            pos2(rect.left() + LABEL_W, rect.top() + HEADER_H),
+            pos2(rect.left() + LABEL_W, rect.top() + HEADER_H + report_h),
             pos2(rect.right() - VALUE_W, rect.bottom() - AXIS_H),
         );
         if plot.width() < 10.0 || plot.height() < 10.0 || self.leads.is_empty() {
@@ -173,6 +178,19 @@ impl Chart {
             FontId::proportional(14.0),
             notice_color,
         );
+        if !report.is_empty() {
+            let line = Rect::from_min_max(
+                pos2(plot.left(), rect.top() + HEADER_H),
+                pos2(plot.right(), plot.top()),
+            );
+            painter.with_clip_rect(line).text(
+                pos2(line.left(), line.center().y - 2.0),
+                Align2::LEFT_CENTER,
+                format!("Report: {report}"),
+                FontId::proportional(15.0),
+                TEXT,
+            );
+        }
         let n = self.leads[0].samples.len();
         let Some(idx) = hover
             .filter(|p| plot.y_range().contains(p.y))
@@ -241,6 +259,8 @@ pub struct EcgApp {
     wanted: Vec<LeadName>,
     /// PTB-XL metadata; each record shown has its row printed to the terminal.
     db: Option<Database>,
+    /// The current record's report text from `db` (empty if unavailable).
+    report: String,
     /// Why the last navigation skipped records, if it did.
     error: Option<String>,
 }
@@ -253,22 +273,27 @@ impl EcgApp {
         wanted: Vec<LeadName>,
         db: Option<Database>,
     ) -> Self {
-        let app = Self {
+        let mut app = Self {
             chart,
             records,
             wanted,
             db,
+            report: String::new(),
             error: None,
         };
-        app.print_info();
+        app.show_info();
         app
     }
 
-    /// Print the current record's spreadsheet row (columns K, L, M).
-    fn print_info(&self) {
-        if let Some(db) = &self.db {
-            println!("{}", database::describe(db, self.records.current()));
-        }
+    /// Print the current record's spreadsheet row (columns K, L, M) and
+    /// keep its report for the chart header.
+    fn show_info(&mut self) {
+        let Some(db) = &self.db else { return };
+        let hea = self.records.current();
+        println!("{}", database::describe(db, hea));
+        self.report = database::ecg_id(hea)
+            .and_then(|id| db.get(id))
+            .map_or_else(String::new, |info| info.report.clone());
     }
 
     /// Move `step` (±1) records, skipping any that fail to load.
@@ -294,7 +319,7 @@ impl EcgApp {
             Some((index, chart)) => {
                 self.records.set_current(index);
                 self.chart = chart;
-                self.print_info();
+                self.show_info();
                 true
             }
             None => false,
@@ -336,6 +361,7 @@ impl eframe::App for EcgApp {
             response.hover_pos(),
             &notice,
             color,
+            &self.report,
         );
     }
 }
@@ -389,6 +415,36 @@ mod tests {
         assert_eq!(end_err, None);
         assert!(back);
         assert!(app.chart.title.starts_with("Record 1 "));
+    }
+
+    #[test]
+    fn report_follows_the_current_record() {
+        use calamine::Data;
+        let dir = std::env::temp_dir().join(format!("ecgdisp-report-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_record(&dir, "00001_hr", true);
+        write_record(&dir, "00002_hr", true);
+        let row = |id: i64, report: &str| {
+            let mut r = vec![Data::Empty; 13];
+            r[0] = Data::Int(id);
+            r[10] = Data::String(report.into());
+            r
+        };
+        let rows = [row(1, "sinusrhythmus normales ekg")];
+        let db = Database::from_rows(rows.iter().map(|r| r.iter()));
+        let wanted = vec![LeadName::II];
+        let start = dir.join("00001_hr.hea");
+        let chart = load_chart(&start, &wanted).unwrap();
+        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, Some(db));
+        let first = app.report.clone();
+        app.navigate(1);
+        let second = app.report.clone();
+        app.navigate(-1);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(first, "sinusrhythmus normales ekg");
+        assert_eq!(second, "", "record 2 has no row");
+        assert_eq!(app.report, first);
     }
 
     #[test]
