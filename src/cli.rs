@@ -12,8 +12,9 @@ const DEFAULT_DATA_DIR: &str =
 #[derive(Debug, Parser)]
 #[command(version)]
 pub struct Args {
-    /// Record to show: a number (1 → 00001_hr), a record name (00001_hr),
-    /// or a path to a .hea/.dat file.
+    /// Record to show: a number of up to three digits, combined with the first
+    /// two characters of the directory name (1 in .../01000 → 01001_hr),
+    /// a record name (00001_hr), or a path to a .hea/.dat file.
     #[arg(default_value = "1")]
     pub record: String,
 
@@ -42,7 +43,11 @@ pub fn default_data_dir() -> PathBuf {
 }
 
 /// Turn the `record` argument into the path of its `.hea` file.
-pub fn record_header_path(record: &str, dir: &Path) -> PathBuf {
+///
+/// A plain number of at most three digits names a record in `dir`: the first
+/// two characters of `dir`'s name followed by the number zero-padded to three
+/// digits, so `5` in `.../01000` is `01005_hr`.
+pub fn record_header_path(record: &str, dir: &Path) -> Result<PathBuf, String> {
     let p = Path::new(record);
     let has_ext = matches!(p.extension().and_then(|e| e.to_str()), Some("hea" | "dat"));
     let is_path = record.contains(['/', '\\']);
@@ -52,12 +57,23 @@ pub fn record_header_path(record: &str, dir: &Path) -> PathBuf {
         } else {
             dir.join(p)
         };
-        return p.with_extension("hea");
+        return Ok(p.with_extension("hea"));
     }
-    match record.parse::<u32>() {
-        Ok(n) => dir.join(format!("{n:05}_hr.hea")),
-        Err(_) => dir.join(format!("{record}.hea")),
+    if !record.is_empty() && record.bytes().all(|b| b.is_ascii_digit()) {
+        if record.len() > 3 {
+            return Err(format!(
+                "record number '{record}' has more than three digits"
+            ));
+        }
+        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let Some(prefix) = dir_name.get(..2) else {
+            return Err(format!(
+                "directory name '{dir_name}' is too short to give a record prefix"
+            ));
+        };
+        return Ok(dir.join(format!("{prefix}{record:0>3}_hr.hea")));
     }
+    Ok(dir.join(format!("{record}.hea")))
 }
 
 #[cfg(test)]
@@ -67,14 +83,36 @@ mod tests {
     const DIR: &str = "/data";
 
     fn resolve(r: &str) -> PathBuf {
-        record_header_path(r, Path::new(DIR))
+        record_header_path(r, Path::new(DIR)).unwrap()
+    }
+
+    fn resolve_in(r: &str, dir: &str) -> Result<PathBuf, String> {
+        record_header_path(r, Path::new(dir))
     }
 
     #[test]
-    fn numbers_become_zero_padded_hr_records() {
-        assert_eq!(resolve("1"), PathBuf::from("/data/00001_hr.hea"));
-        assert_eq!(resolve("00042"), PathBuf::from("/data/00042_hr.hea"));
-        assert_eq!(resolve("999"), PathBuf::from("/data/00999_hr.hea"));
+    fn numbers_combine_dir_prefix_with_three_padded_digits() {
+        let ok = |r, dir, want| assert_eq!(resolve_in(r, dir), Ok(PathBuf::from(want)), "{r}");
+        ok("1", "/r/00000", "/r/00000/00001_hr.hea");
+        ok("42", "/r/00000", "/r/00000/00042_hr.hea");
+        ok("999", "/r/00000", "/r/00000/00999_hr.hea");
+        ok("5", "/r/01000", "/r/01000/01005_hr.hea");
+        ok("007", "/r/21000", "/r/21000/21007_hr.hea");
+        ok("123", "/r/21000/", "/r/21000/21123_hr.hea");
+    }
+
+    #[test]
+    fn numbers_longer_than_three_digits_are_rejected() {
+        for r in ["1000", "0001", "00042"] {
+            let e = resolve_in(r, "/r/00000").unwrap_err();
+            assert!(e.contains("more than three digits"), "{r}: {e}");
+        }
+    }
+
+    #[test]
+    fn numbers_need_a_two_character_dir_name() {
+        assert!(resolve_in("1", "/r/0").unwrap_err().contains("too short"));
+        assert!(resolve_in("1", "/").is_err());
     }
 
     #[test]

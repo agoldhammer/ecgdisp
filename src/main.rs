@@ -26,7 +26,11 @@ fn main() -> ExitCode {
             .error(ErrorKind::InvalidValue, e)
             .exit()
     });
-    let hea = cli::record_header_path(&args.record, &args.dir);
+    let hea = cli::record_header_path(&args.record, &args.dir).unwrap_or_else(|e| {
+        cli::Args::command()
+            .error(ErrorKind::InvalidValue, e)
+            .exit()
+    });
 
     let chart = match app::load_chart(&hea, &wanted) {
         Ok(c) => c,

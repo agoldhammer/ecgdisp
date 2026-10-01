@@ -3,7 +3,7 @@
 use ecgdisp::{cli, leads, wfdb};
 
 fn load(record: &str) -> Option<wfdb::Record> {
-    let hea = cli::record_header_path(record, &cli::default_data_dir());
+    let hea = cli::record_header_path(record, &cli::default_data_dir()).unwrap();
     if !hea.exists() {
         eprintln!("skipping: {} not found", hea.display());
         return None;
