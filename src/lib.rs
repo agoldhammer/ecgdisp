@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod database;
 pub mod layout;
 pub mod leads;
 pub mod nav;

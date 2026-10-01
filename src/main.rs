@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use ecgdisp::app::{self, EcgApp};
-use ecgdisp::{cli, leads, nav::RecordList};
+use ecgdisp::{cli, database, leads, nav::RecordList};
 use eframe::{egui_wgpu::WgpuSetup, wgpu};
 
 /// By default wgpu also probes OpenGL. Under WSLg that makes Mesa print
@@ -40,6 +40,20 @@ fn main() -> ExitCode {
         }
     };
 
+    let db = match database::find(&hea) {
+        Some(path) => database::Database::open(&path)
+            .inspect_err(|e| eprintln!("ecgdisp: cannot read record database: {e}"))
+            .ok(),
+        None => {
+            eprintln!(
+                "ecgdisp: {} not found above {}",
+                database::FILE_NAME,
+                hea.display()
+            );
+            None
+        }
+    };
+
     let title = app::window_title(&chart);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -48,7 +62,7 @@ fn main() -> ExitCode {
         wgpu_options: wgpu_options(),
         ..Default::default()
     };
-    let app = EcgApp::new(chart, RecordList::scan(&hea), wanted);
+    let app = EcgApp::new(chart, RecordList::scan(&hea), wanted, db);
     match eframe::run_native("ecgdisp", options, Box::new(|_cc| Ok(Box::new(app)))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

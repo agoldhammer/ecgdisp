@@ -20,11 +20,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Pure **Rust** (edition 2024) egui app — egui has no usable Python plotting binding, so the
   original Python/uv scaffold was replaced; use `cargo add` where the list above says uv.
-- Crates: `eframe`/`egui` (window + custom painting), `clap` (CLI).
+- Crates: `eframe`/`egui` (window + custom painting), `clap` (CLI), `calamine` (xlsx).
 - Layout: `src/wfdb.rs` (WFDB `.hea` + format-16 `.dat` reader, verifies checksums),
   `src/leads.rs` (lead names, `-l` parsing, selection), `src/layout.rs` (GUI-free math: ticks,
   time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
   `src/cli.rs` (args, record path resolution), `src/nav.rs` (record list for prev/next),
+  `src/database.rs` (`ptbxl_database.xlsx` lookup by ecg_id; prints columns K/L/M per record),
   `src/app.rs` (egui painting + key handling), `src/main.rs`.
 - `tests/ptbxl.rs` runs against the real dataset and skips itself when it is absent.
 

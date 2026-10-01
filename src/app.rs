@@ -5,6 +5,7 @@ use std::path::Path;
 
 use egui::{Align2, Color32, FontId, Key, Pos2, Rect, Sense, Stroke, pos2};
 
+use crate::database::{self, Database};
 use crate::layout::{self, Range, TickLevel, TimeAxis};
 use crate::leads::{self, LeadName};
 use crate::nav::RecordList;
@@ -238,18 +239,35 @@ pub struct EcgApp {
     chart: Chart,
     records: RecordList,
     wanted: Vec<LeadName>,
+    /// PTB-XL metadata; each record shown has its row printed to the terminal.
+    db: Option<Database>,
     /// Why the last navigation skipped records, if it did.
     error: Option<String>,
 }
 
 impl EcgApp {
     /// `chart` must be the record at `records.current()`.
-    pub fn new(chart: Chart, records: RecordList, wanted: Vec<LeadName>) -> Self {
-        Self {
+    pub fn new(
+        chart: Chart,
+        records: RecordList,
+        wanted: Vec<LeadName>,
+        db: Option<Database>,
+    ) -> Self {
+        let app = Self {
             chart,
             records,
             wanted,
+            db,
             error: None,
+        };
+        app.print_info();
+        app
+    }
+
+    /// Print the current record's spreadsheet row (columns K, L, M).
+    fn print_info(&self) {
+        if let Some(db) = &self.db {
+            println!("{}", database::describe(db, self.records.current()));
         }
     }
 
@@ -276,6 +294,7 @@ impl EcgApp {
             Some((index, chart)) => {
                 self.records.set_current(index);
                 self.chart = chart;
+                self.print_info();
                 true
             }
             None => false,
@@ -347,7 +366,7 @@ mod tests {
         let wanted = vec![LeadName::II];
         let start = dir.join("00001_hr.hea");
         let chart = load_chart(&start, &wanted).unwrap();
-        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted);
+        let mut app = EcgApp::new(chart, RecordList::scan(&start), wanted, None);
 
         let back_at_start = app.navigate(-1);
         let forward = app.navigate(1);

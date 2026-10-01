@@ -1,6 +1,6 @@
 //! Checks against the real PTB-XL records; skipped when the dataset is absent.
 
-use ecgdisp::{cli, leads, wfdb};
+use ecgdisp::{cli, database, leads, wfdb};
 
 fn load(record: &str) -> Option<wfdb::Record> {
     let hea = cli::record_header_path(record, &cli::default_data_dir()).unwrap();
@@ -47,4 +47,21 @@ fn every_record_in_the_directory_loads() {
         }
     }
     assert!(count > 0);
+}
+
+#[test]
+fn database_row_for_record_00001() {
+    let hea = cli::record_header_path("1", &cli::default_data_dir()).unwrap();
+    let Some(path) = database::find(&hea) else {
+        eprintln!("skipping: {} not found", database::FILE_NAME);
+        return;
+    };
+    let start = std::time::Instant::now();
+    let db = database::Database::open(&path).expect("spreadsheet should load");
+    eprintln!("loaded {} rows in {:?}", db.len(), start.elapsed());
+    assert_eq!(db.len(), 21799);
+    let info = db.get(database::ecg_id(&hea).unwrap()).unwrap();
+    assert_eq!(info.report, "sinusrhythmus periphere niederspannung");
+    assert_eq!(info.scp_codes, "{'NORM': 100.0, 'LVOLT': 0.0, 'SR': 0.0}");
+    assert_eq!(info.heart_axis, "");
 }
