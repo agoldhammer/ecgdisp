@@ -1,7 +1,7 @@
 //! Per-record metadata from the PTB-XL spreadsheet `ptbxl_database.xlsx`.
 //!
-//! Rows are keyed by `ecg_id` (column A), which is the record number built
-//! from the directory prefix and the three-digit number (`01005_hr` → 1005).
+//! Rows are keyed by `ecg_id` (column A), which is the five-digit record
+//! number (`01005_hr` → 1005).
 //! Columns K, L and M hold the report, the SCP codes and the heart axis;
 //! column D holds the patient's sex (0 = male, 1 = female).
 
@@ -187,8 +187,7 @@ fn fix_mojibake(s: &str) -> String {
 }
 
 /// The `ecg_id` of the record whose header is `hea`: the leading digits of
-/// its name, i.e. the directory prefix plus the record number
-/// (`.../01000/01005_hr.hea` → 1005).
+/// its name (`.../01000/01005_hr.hea` → 1005).
 pub fn ecg_id(hea: &Path) -> Option<u32> {
     let stem = hea.file_stem()?.to_str()?;
     let digits = stem.split(|c: char| !c.is_ascii_digit()).next()?;
@@ -251,7 +250,7 @@ mod tests {
 
     #[test]
     fn ecg_id_matches_resolved_record_number() {
-        let hea = crate::cli::record_header_path("5", Path::new("/r/01000")).unwrap();
+        let hea = crate::cli::record_header_path("1005", Path::new("/r")).unwrap();
         assert_eq!(ecg_id(&hea), Some(1005));
     }
 

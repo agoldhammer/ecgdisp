@@ -32,7 +32,7 @@ fn record_00001_is_ten_seconds_of_twelve_leads() {
 
 #[test]
 fn every_record_in_the_directory_loads() {
-    let dir = cli::default_data_dir();
+    let dir = cli::default_data_dir().join("00000");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         eprintln!("skipping: {} not found", dir.display());
         return;
@@ -47,6 +47,13 @@ fn every_record_in_the_directory_loads() {
         }
     }
     assert!(count > 0);
+}
+
+#[test]
+fn five_digit_numbers_find_records_in_later_subdirs() {
+    let Some(rec) = load("2106") else { return };
+    assert_eq!(rec.name, "02106_hr");
+    assert_eq!(rec.leads.len(), 12);
 }
 
 #[test]

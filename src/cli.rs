@@ -4,17 +4,17 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-/// Location of the PTB-XL 500 Hz records, relative to the home directory.
-const DEFAULT_DATA_DIR: &str =
-    "Prog/ekgdata/data/ptb/physionet.org/files/ptb-xl/1.0.3/records500/00000";
+/// Base directory of the PTB-XL 500 Hz records, relative to the working
+/// directory (`data500` links to `ptb-xl/1.0.3/records500`). Records live in
+/// subdirectories of a thousand each: `00000`, `01000`, …
+const DEFAULT_DATA_DIR: &str = "data500";
 
 /// Display a 10-second, 12-lead PTB-XL ECG record.
 #[derive(Debug, Parser)]
 #[command(version)]
 pub struct Args {
-    /// Record to show: a number of up to three digits, combined with the first
-    /// two characters of the directory name (1 in .../01000 → 01001_hr),
-    /// a record name (00001_hr), or a path to a .hea/.dat file.
+    /// Record to show: a number of up to five digits (2106 → 02000/02106_hr),
+    /// a record name (02106_hr), or a path to a .hea/.dat file.
     #[arg(default_value = "1")]
     pub record: String,
 
@@ -30,50 +30,52 @@ pub struct Args {
     )]
     pub leads: Vec<String>,
 
-    /// Directory holding the records
+    /// Base directory holding the record subdirectories (00000, 01000, …)
     #[arg(short, long, default_value_os_t = default_data_dir())]
     pub dir: PathBuf,
 }
 
 pub fn default_data_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home.join(DEFAULT_DATA_DIR)
+    PathBuf::from(DEFAULT_DATA_DIR)
 }
 
 /// Turn the `record` argument into the path of its `.hea` file.
 ///
-/// A plain number of at most three digits names a record in `dir`: the first
-/// two characters of `dir`'s name followed by the number zero-padded to three
-/// digits, so `5` in `.../01000` is `01005_hr`.
+/// A plain number of at most five digits is zero-padded to five; its first two
+/// digits followed by `000` name the subdirectory of `dir`, so `2106` is
+/// `dir/02000/02106_hr.hea`. A record name whose leading digits form such a
+/// number (`02106_hr`) goes to the same subdirectory.
 pub fn record_header_path(record: &str, dir: &Path) -> Result<PathBuf, String> {
     let p = Path::new(record);
-    let has_ext = matches!(p.extension().and_then(|e| e.to_str()), Some("hea" | "dat"));
-    let is_path = record.contains(['/', '\\']);
-    if is_path || has_ext {
-        let p = if is_path {
-            p.to_path_buf()
-        } else {
-            dir.join(p)
-        };
+    if record.contains(['/', '\\']) {
         return Ok(p.with_extension("hea"));
     }
     if !record.is_empty() && record.bytes().all(|b| b.is_ascii_digit()) {
-        if record.len() > 3 {
+        if record.len() > 5 {
             return Err(format!(
-                "record number '{record}' has more than three digits"
+                "record number '{record}' has more than five digits"
             ));
         }
-        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let Some(prefix) = dir_name.get(..2) else {
-            return Err(format!(
-                "directory name '{dir_name}' is too short to give a record prefix"
-            ));
-        };
-        return Ok(dir.join(format!("{prefix}{record:0>3}_hr.hea")));
+        return Ok(in_subdir(dir, &format!("{record:0>5}_hr")));
     }
-    Ok(dir.join(format!("{record}.hea")))
+    let name = match p.extension().and_then(|e| e.to_str()) {
+        Some("hea" | "dat") => p.with_extension(""),
+        _ => p.to_path_buf(),
+    };
+    Ok(in_subdir(dir, &name.to_string_lossy()))
+}
+
+/// The `.hea` path of record `name` in its thousands subdirectory of `dir`
+/// (`02106_hr` → `dir/02000/02106_hr.hea`), or directly in `dir` if the name
+/// does not start with five digits.
+fn in_subdir(dir: &Path, name: &str) -> PathBuf {
+    let file = format!("{name}.hea");
+    match name.get(..5) {
+        Some(d) if d.bytes().all(|b| b.is_ascii_digit()) => {
+            dir.join(format!("{}000", &d[..2])).join(file)
+        }
+        _ => dir.join(file),
+    }
 }
 
 #[cfg(test)]
@@ -91,35 +93,44 @@ mod tests {
     }
 
     #[test]
-    fn numbers_combine_dir_prefix_with_three_padded_digits() {
-        let ok = |r, dir, want| assert_eq!(resolve_in(r, dir), Ok(PathBuf::from(want)), "{r}");
-        ok("1", "/r/00000", "/r/00000/00001_hr.hea");
-        ok("42", "/r/00000", "/r/00000/00042_hr.hea");
-        ok("999", "/r/00000", "/r/00000/00999_hr.hea");
-        ok("5", "/r/01000", "/r/01000/01005_hr.hea");
-        ok("007", "/r/21000", "/r/21000/21007_hr.hea");
-        ok("123", "/r/21000/", "/r/21000/21123_hr.hea");
+    fn numbers_pad_to_five_digits_in_thousands_subdir() {
+        let ok = |r, want| assert_eq!(resolve(r), PathBuf::from(want), "{r}");
+        ok("1", "/data/00000/00001_hr.hea");
+        ok("134", "/data/00000/00134_hr.hea");
+        ok("999", "/data/00000/00999_hr.hea");
+        ok("1000", "/data/01000/01000_hr.hea");
+        ok("2106", "/data/02000/02106_hr.hea");
+        ok("21837", "/data/21000/21837_hr.hea");
+        ok("00042", "/data/00000/00042_hr.hea");
+        assert_eq!(
+            resolve_in("2106", "/r/"),
+            Ok(PathBuf::from("/r/02000/02106_hr.hea"))
+        );
     }
 
     #[test]
-    fn numbers_longer_than_three_digits_are_rejected() {
-        for r in ["1000", "0001", "00042"] {
-            let e = resolve_in(r, "/r/00000").unwrap_err();
-            assert!(e.contains("more than three digits"), "{r}: {e}");
+    fn numbers_longer_than_five_digits_are_rejected() {
+        for r in ["100000", "000001"] {
+            let e = resolve_in(r, "/r").unwrap_err();
+            assert!(e.contains("more than five digits"), "{r}: {e}");
         }
     }
 
     #[test]
-    fn numbers_need_a_two_character_dir_name() {
-        assert!(resolve_in("1", "/r/0").unwrap_err().contains("too short"));
-        assert!(resolve_in("1", "/").is_err());
-    }
-
-    #[test]
-    fn names_and_file_names_resolve_in_dir() {
-        assert_eq!(resolve("00007_hr"), PathBuf::from("/data/00007_hr.hea"));
-        assert_eq!(resolve("00007_hr.hea"), PathBuf::from("/data/00007_hr.hea"));
-        assert_eq!(resolve("00007_hr.dat"), PathBuf::from("/data/00007_hr.hea"));
+    fn names_and_file_names_resolve_in_their_subdir() {
+        assert_eq!(
+            resolve("02106_hr"),
+            PathBuf::from("/data/02000/02106_hr.hea")
+        );
+        assert_eq!(
+            resolve("00007_hr.hea"),
+            PathBuf::from("/data/00000/00007_hr.hea")
+        );
+        assert_eq!(
+            resolve("00007_hr.dat"),
+            PathBuf::from("/data/00000/00007_hr.hea")
+        );
+        assert_eq!(resolve("odd"), PathBuf::from("/data/odd.hea"));
     }
 
     #[test]
@@ -161,6 +172,6 @@ mod tests {
 
     #[test]
     fn default_dir_points_at_ptbxl_records() {
-        assert!(default_data_dir().ends_with("records500/00000"));
+        assert_eq!(default_data_dir(), PathBuf::from("data500"));
     }
 }
