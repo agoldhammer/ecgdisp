@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-/// Base directory of the PTB-XL 500 Hz records, relative to the working
+/// Base directory of the PTB-XL 500 Hz records, relative to the project
 /// directory (`data500` links to `ptb-xl/1.0.3/records500`). Records live in
 /// subdirectories of a thousand each: `00000`, `01000`, …
 const DEFAULT_DATA_DIR: &str = "data500";
@@ -35,8 +35,10 @@ pub struct Args {
     pub dir: PathBuf,
 }
 
+/// `data500` in the project directory, fixed at build time so the installed
+/// binary finds it from any working directory.
 pub fn default_data_dir() -> PathBuf {
-    PathBuf::from(DEFAULT_DATA_DIR)
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_DATA_DIR)
 }
 
 /// Turn the `record` argument into the path of its `.hea` file.
@@ -172,6 +174,8 @@ mod tests {
 
     #[test]
     fn default_dir_points_at_ptbxl_records() {
-        assert_eq!(default_data_dir(), PathBuf::from("data500"));
+        let d = default_data_dir();
+        assert!(d.is_absolute(), "{}", d.display());
+        assert!(d.ends_with("data500"), "{}", d.display());
     }
 }

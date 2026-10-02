@@ -36,7 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-cargo run -- 1 -l II,V1        # record 00001_hr, leads II and V1 (default: record 1, ALL leads, -d data500)
+cargo run -- 1 -l II,V1        # record 00001_hr, leads II and V1 (default: record 1, ALL leads, -d <project>/data500)
 cargo run -- --help
 cargo test
 cargo clippy --all-targets
