@@ -1,16 +1,18 @@
 //! GUI-independent geometry: time-axis ticks, time/pixel mapping, cursor
 //! sample lookup, vertical scaling of the traces and window-edge hit testing.
 
-/// Spacing of the light grid lines, in milliseconds.
-pub const MINOR_TICK_MS: u64 = 25;
+/// Spacing of the light time grid lines (one small ECG-paper box), in milliseconds.
+pub const MINOR_TICK_MS: u64 = 40;
+/// Spacing of the bold time grid lines (one large ECG-paper box), in milliseconds.
+pub const MAJOR_TICK_MS: u64 = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TickLevel {
-    /// Every 25 ms: light tick and grid line.
+    /// Small box: 40 ms, or 0.1 mV on the amplitude grid.
     Minor,
-    /// Every 0.5 s: bolder.
-    Half,
-    /// Every 1.0 s: boldest.
+    /// Large box: 200 ms, or 0.5 mV on the amplitude grid.
+    Major,
+    /// Every 1.0 s on the time axis: boldest.
     Second,
 }
 
@@ -26,12 +28,38 @@ pub fn time_ticks(duration_s: f64) -> Vec<(f64, TickLevel)> {
             let ms = k * MINOR_TICK_MS;
             let level = if ms.is_multiple_of(1000) {
                 TickLevel::Second
-            } else if ms.is_multiple_of(500) {
-                TickLevel::Half
+            } else if ms.is_multiple_of(MAJOR_TICK_MS) {
+                TickLevel::Major
             } else {
                 TickLevel::Minor
             };
             (ms as f64 / 1000.0, level)
+        })
+        .collect()
+}
+
+/// Spacing of the light amplitude grid lines (one small ECG-paper box), in mV.
+pub const MINOR_GRID_MV: f32 = 0.1;
+/// Large ECG-paper boxes are this many small boxes high (0.5 mV).
+pub const MINOR_PER_MAJOR_MV: i64 = 5;
+
+/// Amplitude grid lines (mV) inside `range`: [`TickLevel::Minor`] every
+/// 0.1 mV, [`TickLevel::Major`] every 0.5 mV, both anchored at 0 mV.
+/// Computed in whole small boxes so that levels are exact.
+pub fn amplitude_ticks(range: Range) -> Vec<(f32, TickLevel)> {
+    if !(range.lo.is_finite() && range.hi.is_finite()) || range.hi < range.lo {
+        return Vec::new();
+    }
+    let first = (range.lo / MINOR_GRID_MV - 1e-4).ceil() as i64;
+    let last = (range.hi / MINOR_GRID_MV + 1e-4).floor() as i64;
+    (first..=last)
+        .map(|k| {
+            let level = if k % MINOR_PER_MAJOR_MV == 0 {
+                TickLevel::Major
+            } else {
+                TickLevel::Minor
+            };
+            (k as f32 * MINOR_GRID_MV, level)
         })
         .collect()
 }
@@ -239,31 +267,35 @@ mod tests {
     }
 
     #[test]
-    fn ticks_every_25ms_over_ten_seconds() {
+    fn ticks_every_40ms_over_ten_seconds() {
         let ticks = time_ticks(10.0);
-        assert_eq!(ticks.len(), 401);
+        assert_eq!(ticks.len(), 251);
         assert_eq!(ticks.first(), Some(&(0.0, TickLevel::Second)));
         assert_eq!(ticks.last(), Some(&(10.0, TickLevel::Second)));
         assert!(
             ticks
                 .windows(2)
-                .all(|w| ((w[1].0 - w[0].0) - 0.025).abs() < 1e-12)
+                .all(|w| ((w[1].0 - w[0].0) - 0.040).abs() < 1e-12)
         );
     }
 
     #[test]
-    fn tick_levels_follow_half_and_whole_seconds() {
+    fn tick_levels_follow_200ms_and_whole_seconds() {
         let ticks = time_ticks(10.0);
         let count = |lvl| ticks.iter().filter(|t| t.1 == lvl).count();
         assert_eq!(count(TickLevel::Second), 11);
-        assert_eq!(count(TickLevel::Half), 10);
-        assert_eq!(count(TickLevel::Minor), 401 - 21);
+        assert_eq!(count(TickLevel::Major), 40);
+        assert_eq!(count(TickLevel::Minor), 251 - 51);
         let level_at = |t: f64| ticks.iter().find(|x| (x.0 - t).abs() < 1e-9).unwrap().1;
-        assert_eq!(level_at(0.025), TickLevel::Minor);
-        assert_eq!(level_at(0.5), TickLevel::Half);
+        assert_eq!(level_at(0.04), TickLevel::Minor);
+        assert_eq!(level_at(0.2), TickLevel::Major);
         assert_eq!(level_at(1.0), TickLevel::Second);
-        assert_eq!(level_at(7.5), TickLevel::Half);
-        assert_eq!(level_at(7.475), TickLevel::Minor);
+        assert_eq!(level_at(7.6), TickLevel::Major);
+        assert_eq!(level_at(7.64), TickLevel::Minor);
+        assert!(
+            ticks.iter().all(|x| (x.0 - 0.5).abs() > 1e-9),
+            "0.5 s is not on the 40 ms grid"
+        );
     }
 
     #[test]
@@ -271,7 +303,42 @@ mod tests {
         assert_eq!(time_ticks(0.0), vec![(0.0, TickLevel::Second)]);
         assert!(time_ticks(-1.0).is_empty());
         assert!(time_ticks(f64::NAN).is_empty());
-        assert_eq!(time_ticks(0.06).len(), 3); // 0, 25, 50 ms
+        assert_eq!(time_ticks(0.09).len(), 3); // 0, 40, 80 ms
+    }
+
+    #[test]
+    fn amplitude_ticks_every_tenth_mv_bold_every_half() {
+        let ticks = amplitude_ticks(Range {
+            lo: -0.73,
+            hi: 1.02,
+        });
+        assert_eq!(ticks.len(), 18); // -0.7 ..= 1.0
+        assert!((ticks[0].0 + 0.7).abs() < 1e-6);
+        assert!((ticks[17].0 - 1.0).abs() < 1e-6);
+        let majors: Vec<f32> = ticks
+            .iter()
+            .filter(|t| t.1 == TickLevel::Major)
+            .map(|t| t.0)
+            .collect();
+        assert_eq!(majors.len(), 4);
+        for (m, want) in majors.iter().zip([-0.5, 0.0, 0.5, 1.0]) {
+            assert!((m - want).abs() < 1e-6);
+        }
+        assert!(ticks.iter().all(|t| t.1 != TickLevel::Second));
+    }
+
+    #[test]
+    fn amplitude_ticks_include_exact_edges_and_reject_bad_ranges() {
+        assert_eq!(amplitude_ticks(Range { lo: 0.0, hi: 0.5 }).len(), 6);
+        assert_eq!(amplitude_ticks(Range { lo: 0.01, hi: 0.09 }), vec![]);
+        assert!(amplitude_ticks(Range { lo: 1.0, hi: -1.0 }).is_empty());
+        assert!(
+            amplitude_ticks(Range {
+                lo: f32::NAN,
+                hi: 1.0
+            })
+            .is_empty()
+        );
     }
 
     #[test]

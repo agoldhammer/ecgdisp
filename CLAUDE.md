@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - display all 10 seconds of ecg data in graphical window on Windows using egui
 
-- the time axis should have light ticks (and light grid lines) every 25ms, with bolder ticks (and bolder grid lines) at multiples of 0.5 and 1.0 sec
+- the time axis should have light ticks (and light grid lines) every 40ms, with bold ticks (and bold grid lines) every 200ms and bolder ones at multiples of 1.0 sec; the amplitude grid follows ECG paper: light lines every 0.1 mV, bold every 0.5 mV
 
 - cmd line should include an option for leads to display: I, II, III, V1 ... V6, AVL, AVF, AVR
 

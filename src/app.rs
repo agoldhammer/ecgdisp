@@ -27,7 +27,7 @@ const AXIS_H: f32 = 40.0;
 
 const PAPER: Color32 = Color32::from_rgb(255, 250, 247);
 const GRID_MINOR: Color32 = Color32::from_rgb(246, 214, 214);
-const GRID_HALF: Color32 = Color32::from_rgb(226, 150, 150);
+const GRID_MAJOR: Color32 = Color32::from_rgb(226, 150, 150);
 const GRID_SECOND: Color32 = Color32::from_rgb(190, 80, 80);
 const STRIP_EDGE: Color32 = Color32::from_rgb(170, 170, 170);
 const BASELINE: Color32 = Color32::from_rgb(200, 200, 215);
@@ -39,11 +39,16 @@ const MEASURE: Color32 = Color32::from_rgb(20, 70, 40);
 const ALERT: Color32 = Color32::from_rgb(190, 60, 0);
 const QRS_MARK: Color32 = Color32::from_rgb(0, 130, 90);
 
+/// Smallest on-screen spacing at which the 0.1 mV grid lines are drawn.
+const MIN_GRID_PX: f32 = 3.0;
+/// Smallest spacing between 200 ms ticks at which they get a time label.
+const MIN_LABEL_PX: f32 = 36.0;
+
 fn grid_stroke(level: TickLevel) -> (Stroke, f32) {
     // (grid line stroke, tick length below the plot)
     match level {
         TickLevel::Minor => (Stroke::new(0.6, GRID_MINOR), 4.0),
-        TickLevel::Half => (Stroke::new(1.2, GRID_HALF), 8.0),
+        TickLevel::Major => (Stroke::new(1.2, GRID_MAJOR), 8.0),
         TickLevel::Second => (Stroke::new(1.8, GRID_SECOND), 12.0),
     }
 }
@@ -139,14 +144,39 @@ impl Chart {
         };
         let small = FontId::proportional(12.0);
 
-        // Time grid and axis ticks.
+        // Traces, one horizontal strip per lead.
+        let strip_h = plot.height() / self.leads.len() as f32;
+        let strips: Vec<Rect> = (0..self.leads.len())
+            .map(|i| {
+                let top = plot.top() + i as f32 * strip_h;
+                Rect::from_min_max(pos2(plot.left(), top), pos2(plot.right(), top + strip_h))
+            })
+            .collect();
+
+        // Amplitude grid (0.1 mV / 0.5 mV boxes) in each strip, drawn before
+        // the time grid so bold time lines stay on top. Small boxes are left
+        // out when they would be too close together to read.
+        for (range, strip) in self.ranges.iter().zip(&strips) {
+            let box_px = layout::MINOR_GRID_MV * strip.height() / (range.hi - range.lo);
+            for (v, level) in layout::amplitude_ticks(*range) {
+                if level == TickLevel::Minor && box_px < MIN_GRID_PX {
+                    continue;
+                }
+                let y = range.value_to_y(v, strip.top(), strip.bottom());
+                painter.hline(plot.x_range(), y, grid_stroke(level).0);
+            }
+        }
+
+        // Time grid and axis ticks. 200 ms labels only when there is room.
+        let major_px = (axis.time_to_x(layout::MAJOR_TICK_MS as f64 / 1000.0) - axis.left).abs();
         for &(t, level) in &self.ticks {
             let x = axis.time_to_x(t);
             let (stroke, tick_len) = grid_stroke(level);
             painter.vline(x, plot.y_range(), stroke);
             let tick_stroke = Stroke::new(stroke.width, TEXT);
             painter.vline(x, plot.bottom()..=plot.bottom() + tick_len, tick_stroke);
-            if level != TickLevel::Minor {
+            if level == TickLevel::Second || (level == TickLevel::Major && major_px >= MIN_LABEL_PX)
+            {
                 painter.text(
                     pos2(x, plot.bottom() + 14.0),
                     Align2::CENTER_TOP,
@@ -164,14 +194,6 @@ impl Chart {
             TEXT,
         );
 
-        // Traces, one horizontal strip per lead.
-        let strip_h = plot.height() / self.leads.len() as f32;
-        let strips: Vec<Rect> = (0..self.leads.len())
-            .map(|i| {
-                let top = plot.top() + i as f32 * strip_h;
-                Rect::from_min_max(pos2(plot.left(), top), pos2(plot.right(), top + strip_h))
-            })
-            .collect();
         for ((lead, range), strip) in self.leads.iter().zip(&self.ranges).zip(&strips) {
             painter.hline(plot.x_range(), strip.bottom(), Stroke::new(1.0, STRIP_EDGE));
             if (range.lo..=range.hi).contains(&0.0) {
