@@ -4,10 +4,17 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-/// Base directory of the PTB-XL 500 Hz records, relative to the project
-/// directory (`data500` links to `ptb-xl/1.0.3/records500`). Records live in
-/// subdirectories of a thousand each: `00000`, `01000`, …
-const DEFAULT_DATA_DIR: &str = "data500";
+use crate::archive;
+
+/// Where record folders unpacked from the dataset zip go, under the system
+/// temporary directory (`/tmp`). Records live in subdirectories of a thousand
+/// each: `00000`, `01000`, …
+const DEFAULT_DATA_DIR: &str = "ecgdisp/records500";
+
+/// `ptbxl_database.xlsx` relative to the project directory (the zip only
+/// carries the `.csv` version).
+const DEFAULT_DATABASE: &str =
+    "../ekgdata/data/ptb/physionet.org/files/ptb-xl/1.0.3/ptbxl_database.xlsx";
 
 /// Display a 10-second, 12-lead PTB-XL ECG record.
 #[derive(Debug, Parser)]
@@ -30,15 +37,29 @@ pub struct Args {
     )]
     pub leads: Vec<String>,
 
-    /// Base directory holding the record subdirectories (00000, 01000, …)
+    /// Base directory holding the record subdirectories (00000, 01000, …).
+    /// A missing subdirectory is unpacked into it from --zip on first use.
     #[arg(short, long, default_value_os_t = default_data_dir())]
     pub dir: PathBuf,
+
+    /// PTB-XL dataset zip to unpack record folders from
+    #[arg(short, long, default_value_os_t = archive::default_zip())]
+    pub zip: PathBuf,
+
+    /// Record spreadsheet, used when none is found above the record
+    #[arg(long, value_name = "XLSX", default_value_os_t = default_database())]
+    pub db: PathBuf,
 }
 
-/// `data500` in the project directory, fixed at build time so the installed
-/// binary finds it from any working directory.
+/// `ecgdisp/records500` in the system temporary directory.
 pub fn default_data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_DATA_DIR)
+    std::env::temp_dir().join(DEFAULT_DATA_DIR)
+}
+
+/// `ptbxl_database.xlsx` next to the project, fixed at build time so the
+/// installed binary finds it from any working directory.
+pub fn default_database() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_DATABASE)
 }
 
 /// Turn the `record` argument into the path of its `.hea` file.
@@ -153,6 +174,10 @@ mod tests {
         assert_eq!(a.record, "1");
         assert_eq!(a.leads, ["all"]);
         assert_eq!(a.dir, default_data_dir());
+        assert_eq!(a.zip, archive::default_zip());
+        let a = Args::try_parse_from(["ecgdisp", "-z", "/x.zip", "--db", "/d.xlsx"]).unwrap();
+        assert_eq!(a.zip, PathBuf::from("/x.zip"));
+        assert_eq!(a.db, PathBuf::from("/d.xlsx"));
     }
 
     #[test]
@@ -176,6 +201,9 @@ mod tests {
     fn default_dir_points_at_ptbxl_records() {
         let d = default_data_dir();
         assert!(d.is_absolute(), "{}", d.display());
-        assert!(d.ends_with("data500"), "{}", d.display());
+        assert!(d.starts_with(std::env::temp_dir()), "{}", d.display());
+        assert!(d.ends_with("ecgdisp/records500"), "{}", d.display());
+        assert!(default_database().ends_with("1.0.3/ptbxl_database.xlsx"));
+        assert!(archive::default_zip().is_absolute());
     }
 }

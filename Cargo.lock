@@ -927,6 +927,7 @@ dependencies = [
  "clap",
  "eframe",
  "egui",
+ "zip",
 ]
 
 [[package]]

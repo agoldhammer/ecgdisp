@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod app;
+pub mod archive;
 pub mod cli;
 pub mod database;
 pub mod dsp;

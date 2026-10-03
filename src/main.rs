@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use ecgdisp::app::{self, EcgApp};
-use ecgdisp::{cli, database, leads, nav::RecordList};
+use ecgdisp::{archive, cli, database, leads, nav::RecordList};
 use eframe::{egui_wgpu::WgpuSetup, wgpu};
 
 /// By default wgpu also probes OpenGL. Under WSLg that makes Mesa print
@@ -44,6 +44,11 @@ fn main() -> ExitCode {
             .exit()
     });
 
+    if let Err(e) = archive::ensure_record(&args.zip, &args.dir, &hea) {
+        eprintln!("ecgdisp: cannot unpack record folder: {e}");
+        return ExitCode::FAILURE;
+    }
+
     let chart = match app::load_chart(&hea, &wanted) {
         Ok(c) => c,
         Err(e) => {
@@ -52,15 +57,17 @@ fn main() -> ExitCode {
         }
     };
 
-    let db = match database::find(&hea) {
+    let db_path = database::find(&hea).or_else(|| args.db.is_file().then(|| args.db.clone()));
+    let db = match db_path {
         Some(path) => database::Database::open(&path)
             .inspect_err(|e| eprintln!("ecgdisp: cannot read record database: {e}"))
             .ok(),
         None => {
             eprintln!(
-                "ecgdisp: {} not found above {}",
+                "ecgdisp: {} not found above {} nor at {}",
                 database::FILE_NAME,
-                hea.display()
+                hea.display(),
+                args.db.display()
             );
             None
         }

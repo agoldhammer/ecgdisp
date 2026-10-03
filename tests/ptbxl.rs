@@ -1,9 +1,23 @@
-//! Checks against the real PTB-XL records; skipped when the dataset is absent.
+//! Checks against the real PTB-XL records, unpacked on demand from the dataset
+//! zip; skipped when the dataset is absent.
 
-use ecgdisp::{analysis, cli, database, leads, wfdb};
+use std::path::PathBuf;
+
+use ecgdisp::{analysis, archive, cli, database, leads, wfdb};
+
+/// The `.hea` path of `record`, unpacking its folder from the zip if needed.
+fn header(record: &str) -> PathBuf {
+    let dir = cli::default_data_dir();
+    let hea = cli::record_header_path(record, &dir).unwrap();
+    let zip = archive::default_zip();
+    if zip.is_file() {
+        archive::ensure_record(&zip, &dir, &hea).expect("folder should unpack");
+    }
+    hea
+}
 
 fn load(record: &str) -> Option<wfdb::Record> {
-    let hea = cli::record_header_path(record, &cli::default_data_dir()).unwrap();
+    let hea = header(record);
     if !hea.exists() {
         eprintln!("skipping: {} not found", hea.display());
         return None;
@@ -32,7 +46,7 @@ fn record_00001_is_ten_seconds_of_twelve_leads() {
 
 #[test]
 fn every_record_in_the_directory_loads() {
-    let dir = cli::default_data_dir().join("00000");
+    let dir = header("1").parent().unwrap().to_path_buf();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         eprintln!("skipping: {} not found", dir.display());
         return;
@@ -58,8 +72,10 @@ fn five_digit_numbers_find_records_in_later_subdirs() {
 
 #[test]
 fn database_row_for_record_00001() {
-    let hea = cli::record_header_path("1", &cli::default_data_dir()).unwrap();
-    let Some(path) = database::find(&hea) else {
+    let hea = header("1");
+    let fallback = cli::default_database();
+    let found = database::find(&hea).or_else(|| fallback.is_file().then_some(fallback));
+    let Some(path) = found else {
         eprintln!("skipping: {} not found", database::FILE_NAME);
         return;
     };

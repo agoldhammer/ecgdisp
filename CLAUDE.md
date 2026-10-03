@@ -20,11 +20,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Pure **Rust** (edition 2024) egui app — egui has no usable Python plotting binding, so the
   original Python/uv scaffold was replaced; use `cargo add` where the list above says uv.
-- Crates: `eframe`/`egui` (window + custom painting), `clap` (CLI), `calamine` (xlsx).
+- Crates: `eframe`/`egui` (window + custom painting), `clap` (CLI), `calamine` (xlsx), `zip`.
 - Layout: `src/wfdb.rs` (WFDB `.hea` + format-16 `.dat` reader, verifies checksums),
   `src/leads.rs` (lead names, `-l` parsing, selection), `src/layout.rs` (GUI-free math: ticks,
   time/pixel mapping, cursor sample lookup, strip scaling — unit-test new logic here),
-  `src/cli.rs` (args, record path resolution), `src/nav.rs` (record list for prev/next),
+  `src/cli.rs` (args, record path resolution), `src/archive.rs` (unpacks a record's whole
+  `records500/NNNNN` folder from `../ekgdata/ptb-xl-…-1.0.3.zip` into the data dir on
+  first use; the xlsx is not in the zip, so `--db` points at the unpacked one),
+  `src/nav.rs` (record list for prev/next),
   `src/database.rs` (`ptbxl_database.xlsx` lookup by ecg_id; prints columns K/L/M per record,
   reads sex from D), `src/dsp.rs` (scipy/numpy equivalents: Butterworth SOS, `sosfiltfilt`,
   `find_peaks`, …), `src/analysis.rs` (port of `../ekgdata/src/ekgdata/analyze.py`: QRS
@@ -36,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-cargo run -- 1 -l II,V1        # record 00001_hr, leads II and V1 (default: record 1, ALL leads, -d <project>/data500)
+cargo run -- 1 -l II,V1        # record 00001_hr, leads II and V1 (default: record 1, ALL leads, -d /tmp/ecgdisp/records500, -z ../ekgdata/ptb-xl-*.zip)
 cargo run -- --help
 cargo test
 cargo clippy --all-targets
